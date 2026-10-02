@@ -4,6 +4,21 @@
 
 Deployment platform, runtime, database, email provider, and application stack have not been selected. This guide records environment-neutral requirements and the checklist to complete after those decisions.
 
+## Cost and customer isolation targets
+
+- Prefer free tiers and aim for zero recurring cost where practical. When a customer supplies a domain, target no more than INR 500/month for hosting and database; domain registration is separate.
+- Itemize email, taxes, backups, and any other recurring or usage-based charges per deployment. They may be free in some configurations and may incur costs in others; verify current pricing and agree the applicable budget before deployment.
+- Each customer deployment must have a separate database, application configuration, secrets, email-provider credentials, and initial administrator. Deploying a cloned repository alone does not provision these resources.
+- The source repository may be cloned, but customer data and credentials must be supplied through protected cloud configuration and must never be copied from another deployment.
+- Confirm which cost categories apply before declaring a deployment within budget; do not assume a free email quota, backup, or tax treatment.
+- Show or document provider quotas and establish usage/billing alerts where supported. Free-tier limits and terms may change; recheck them before launch.
+
+One candidate is Cloudflare Workers plus D1 and a transactional email provider. Cloudflare currently lists a free Workers plan and D1 free quotas, while the Workers Paid plan starts at USD $5/month per account. The paid minimum may exceed the INR 500 target after currency conversion and taxes. Email plans and custom-domain costs are separate. Check current pricing and operational limits rather than treating a free tier as a cost or availability guarantee:
+
+- [Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+- [Cloudflare D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)
+- [Resend email pricing](https://resend.com/pricing) (example provider; not selected)
+
 ## Environments
 
 Plan separate environments for:
@@ -31,11 +46,13 @@ Use the platform's protected secret/configuration facility. Do not commit creden
 
 1. Review and test code changes, including authorization and data-integrity tests.
 2. Build a versioned release artifact through the selected build process.
-3. Apply reviewed database migrations with a recovery plan.
-4. Deploy to staging and verify login, hostel access boundaries, bookings, payment recording, email delivery, and reports.
-5. Promote the same verified artifact to production.
-6. Monitor errors, notification delivery, and operational health.
-7. Document rollback steps, accounting for any irreversible schema changes or data writes.
+3. Provision isolated cloud resources and protected configuration for the intended customer.
+4. Apply reviewed database migrations with a recovery plan.
+5. Create the initial administrator through a secure bootstrap flow.
+6. Deploy to staging and verify login, hostel access boundaries, bookings, payment recording, email delivery, and reports.
+7. Promote the same verified artifact to that customer's production deployment.
+8. Monitor errors, notification delivery, provider quotas, and operational health.
+9. Document rollback steps, accounting for any irreversible schema changes or data writes.
 
 Do not treat a failed email send as a reason to roll back a saved payment; expose the notification failure for follow-up.
 

@@ -22,6 +22,20 @@ services    database      worker/provider
     Audit events
 ```
 
+## Independent customer deployment model
+
+Use one maintained codebase that can be deployed repeatedly. Each customer/owner gets an independent application deployment with its own database, secrets, email configuration, and initial administrator. A clone copies source code only; provisioning and deploying it must also create/configure the customer's cloud resources and apply database migrations.
+
+Do not place multiple owners' guest or payment data in a shared database by default. Do not depend on customer identity being selected from a shared tenant directory. Each deployment may still manage multiple hostels belonging to its single owner.
+
+Make instance-specific settings available through documented deployment configuration. A first-run setup or controlled bootstrap process should create the initial admin securely without committing credentials. Schema changes should use repeatable migrations. Keep customer data and secrets out of the Git repository.
+
+## Candidate low-cost hosting approach
+
+Cloudflare Workers with D1 is a candidate for a small, independently deployed responsive app: Workers can serve application/API code, D1 can hold operational records, and a scheduled Worker can run overdue-reminder jobs. A transactional email provider can be integrated over HTTPS. Validate the framework, authentication design, concurrency constraints, export/backup process, and runtime limits before committing to this stack.
+
+Cloudflare currently documents free Workers and D1 quotas; its Workers Paid plan has a USD $5/month account minimum. That minimum can consume or exceed an INR 500 monthly budget after exchange rates, taxes, or bank fees. Free-tier capacity and service guarantees are not a substitute for verifying production backup and availability needs. See current [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) and [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/).
+
 ### User interface
 
 - Responsive web interface for desktop and mobile.
@@ -88,6 +102,8 @@ Critical operations should be atomic where possible:
 - Background-job or queue technology for scheduled reminders and email delivery.
 - Email provider, sender identity, templates, retry policy, and delivery monitoring.
 - Hosting platform, regions, environments, and network topology.
+- Whether the INR 500/month target includes a custom domain, provider taxes, email overages, and paid backups.
+- Who creates and owns the cloud resources and email credentials for each customer clone.
 - Backup/restore strategy, monitoring, and operational ownership.
 - Expected scale, availability, and recovery objectives.
 

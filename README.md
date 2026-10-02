@@ -13,9 +13,15 @@ The system records payments received by staff through cash or UPI; it does not p
 - [Security and privacy](./SECURITY_AND_PRIVACY.md) — data handling and security requirements.
 - [Deployment guide](./DEPLOYMENT.md) — environment-neutral deployment checklist and open decisions.
 
+## Deployment and customer isolation
+
+Prefer free tiers and aim for zero recurring cost where practical. If the customer supplies a domain, target at most INR 500/month for hosting and database; track domain registration separately. Email, taxes, backups, and other charges can vary and must be itemized for each deployment. The same codebase should be deployable separately for different owners, with each deployment using its own database, credentials, email configuration, and initial admin. Cloning the Git repository does not provision cloud resources; each instance needs a documented setup/deploy process. See [ARCHITECTURE.md](./ARCHITECTURE.md) and [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+Cloudflare Workers with D1 is documented as a candidate, not a finalized stack. Free-tier limits, backup needs, domain costs, taxes, and email usage must be evaluated before promising a production cost.
+
 ## Current status
 
-This repository contains planning and design documents. An implementation stack, application code, and deployment environment have not yet been selected.
+This repository contains planning and design documents. An application stack and deployment environment have not yet been selected.
 
 ## Requirements highlights
 

@@ -9,6 +9,7 @@ The application records payments received outside the system. It does not collec
 ## Goals
 
 - Manage multiple hostels from one application, with consolidated views for authorized administrators.
+- Allow the same codebase to be deployed as independent applications for different owners, without sharing guest data or operational records between deployments.
 - Make reservations, check-ins, bed assignments, and checkouts easy to track.
 - Keep room and bed availability accurate and prevent overlapping assignments.
 - Calculate rent according to configurable rules for each hostel and sharing option.
@@ -108,6 +109,9 @@ Reports should be filterable by hostel and date range. Consolidated reports shou
 ## Quality requirements
 
 - Responsive, accessible interface suitable for desktop and mobile use.
+- Prefer free tiers and aim for zero recurring cost where practical. When a customer already has or supplies a domain, target no more than INR 500/month for hosting and database for that independent deployment; treat domain registration separately. Email, taxes, backups, and other charges may vary by case and must be itemized and checked against the agreed budget before deployment. These are targets, not provider price guarantees.
+- Keep each customer deployment's configuration, database, credentials, and guest data isolated from other deployments.
+- Make a fresh clone configurable for a different owner through documented environment configuration, database migrations, and first-admin setup; do not require source-code edits containing customer-specific data or secrets.
 - Validate form inputs and show actionable error messages.
 - Provide visible loading, empty, success, and failure states.
 - Protect guest and payment information with authentication and role-based access.
@@ -117,6 +121,7 @@ Reports should be filterable by hostel and date range. Consolidated reports shou
 ## Out of scope
 
 - Online checkout, payment gateway integration, or in-app payment processing.
+- A shared multi-customer SaaS tenant deployment; each customer is provisioned as an independent application deployment.
 - Uploading identity documents.
 - Guest self-service registration or booking submission; staff enter guest details.
 
