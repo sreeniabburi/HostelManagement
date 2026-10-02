@@ -2,7 +2,7 @@
 
 ## Status and conventions
 
-This is a technology-neutral conceptual model, not a database migration or final schema. Identifiers, exact types, indexes, constraints, and naming should be aligned with the selected stack. Store timestamps consistently and define the business timezone for each hostel or organization before implementation.
+This document describes the conceptual model and current implementation. Migrations in `app/migrations/` define users, sessions, hostels, floors, rooms, beds, sign-in limits, guests, bookings, and payment records. Current booking totals are entered by staff rather than calculated from a rent rule; email notifications and audit events are not implemented. Stay dates are ISO date-only values interpreted as check-in inclusive and check-out exclusive. Production deployment still needs an explicit business timezone policy.
 
 All records that contain hostel operations must be scoped to the applicable hostel. Monetary amounts should use a precise decimal or integer-minor-unit representation, not binary floating point. Currency should be explicit at the organization or hostel level if multiple currencies may be supported.
 
@@ -75,7 +75,7 @@ Do not include uploaded identity documents. Full identity-document numbers are n
 
 ### Booking
 
-Represents a reservation or stay.
+Represents a reservation or stay. Current date ranges treat check-in as inclusive and check-out as exclusive.
 
 - `id`, `hostel_id`, `guest_id`
 - status: reserved, checked in, checked out, or cancelled
@@ -123,11 +123,11 @@ The charge ledger makes due amounts auditable and supports varying rent rules. D
 
 ### PaymentRecord
 
-Represents a payment staff received outside the app.
+Represents an immutable record of a payment staff received outside the app. The current initial release does not include a payment correction/reversal workflow.
 
 - `id`, `hostel_id`, `booking_id`, `guest_id`
 - amount and currency
-- method: cash or UPI
+- method: cash, UPI, bank transfer, or other
 - received date/time
 - optional external reference or note
 - recorded-by user and created timestamp

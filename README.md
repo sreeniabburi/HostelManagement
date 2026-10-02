@@ -8,7 +8,7 @@ The system records payments received by staff through cash or UPI; it does not p
 
 - [Project brief](./PROJECT.md) — goals, roles, requirements, scope, and acceptance criteria.
 - [Design specification](./DESIGN.md) — navigation, screens, workflows, and responsive behavior.
-- [Architecture draft](./ARCHITECTURE.md) — technology-neutral system structure and open decisions.
+- [Architecture](./ARCHITECTURE.md) — selected initial stack, system structure, and open decisions.
 - [Data model draft](./DATA_MODEL.md) — conceptual entities and relationships.
 - [Security and privacy](./SECURITY_AND_PRIVACY.md) — data handling and security requirements.
 - [Deployment guide](./DEPLOYMENT.md) — environment-neutral deployment checklist and open decisions.
@@ -17,11 +17,11 @@ The system records payments received by staff through cash or UPI; it does not p
 
 Prefer free tiers and aim for zero recurring cost where practical. If the customer supplies a domain, target at most INR 500/month for hosting and database; track domain registration separately. Email, taxes, backups, and other charges can vary and must be itemized for each deployment. The same codebase should be deployable separately for different owners, with each deployment using its own database, credentials, email configuration, and initial admin. Cloning the Git repository does not provision cloud resources; each instance needs a documented setup/deploy process. See [ARCHITECTURE.md](./ARCHITECTURE.md) and [DEPLOYMENT.md](./DEPLOYMENT.md).
 
-Cloudflare Workers with D1 is documented as a candidate, not a finalized stack. Free-tier limits, backup needs, domain costs, taxes, and email usage must be evaluated before promising a production cost.
+Selected initial stack: React + TypeScript, Cloudflare Workers, and D1. The email provider and production backup/restore approach remain open. Free-tier limits, backup needs, domain costs, taxes, and email usage must be evaluated per deployment; free-tier availability is not a production cost or backup guarantee.
 
 ## Current status
 
-This repository contains planning and design documents. An application stack and deployment environment have not yet been selected.
+The app has first-administrator setup, server-side sign-in, secure cookie sessions, D1-backed hostel/floor/room/bed inventory, and admin-managed staff accounts with hostel assignments. Bookings and guest profiles are saved to D1; date-overlap checks reserve beds, and staff can check guests in, check them out, or cancel reservations. Staff can enter the agreed total rent for each booking and record partial or full cash, UPI, bank-transfer, or other payments received outside the app. Guest directory, booking history, outstanding balances, occupancy and receipt summaries, and CSV report export are database-backed. Signed-in users can change their passwords and admins can reset staff passwords; forgotten owner/admin-password recovery remains a production blocker. Manual D1 SQL export and restore commands are documented, but automated backups and restore drills are not configured. Email reminders are still deferred.
 
 ## Requirements highlights
 
@@ -37,4 +37,22 @@ See [PROJECT.md](./PROJECT.md) for the complete requirements and [DESIGN.md](./D
 
 ## Development
 
-No application code or run commands have been added yet. Development setup instructions will be added after the technology stack is selected.
+### Local application preview
+
+```powershell
+cd app
+npm install
+npm run db:migrate:local
+npm run dev
+```
+
+Production build check:
+
+```powershell
+cd app
+npm run build
+```
+
+For a Cloudflare account, authenticate with `npx wrangler login`, create a D1 database with `npx wrangler d1 create hostel-management`, replace the placeholder `database_id` in `app/wrangler.jsonc` with the ID returned by Wrangler, apply the schema using `npm run db:migrate:remote`, then deploy with `npm run deploy`. Deployment is blocked until a real database ID is configured. Keep the deployed URL private until the owner creates the first administrator.
+
+The local Wrangler D1 configuration stores development data under the ignored `app/.wrangler/` directory. Do not use it for real guest information. Production deployment is not yet complete. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the health check, manual backup/restore runbook, and unresolved owner-account recovery requirement.

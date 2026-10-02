@@ -9,6 +9,14 @@
 - Support both desktop and mobile without hiding essential actions on smaller screens.
 - Confirm consequential actions and show success or failure clearly.
 
+## Current UI prototype
+
+The application currently implements first-administrator setup and sign-in, admin-managed staff accounts with assigned-hostel access and deactivation, plus a responsive dashboard and bookings-screen prototype. The bookings view includes sample booking records, guest/phone/reference search, status filtering, desktop table and mobile card layouts, and a three-step reservation form for stay/bed details, guest details, and review. New bookings use the selected hostel and list only its currently vacant rooms and beds, but completing the preview does not save a reservation.
+
+The Rooms & Beds screen reads floor, room, bed, sharing, and occupancy status from D1. During hostel creation, admins specify the room count for each floor; rooms receive sequential default numbers (for example, 101, 102 and 201), default 4-sharing, and bed labels such as `101-a` through `101-d`. Room number and sharing can be edited later; bed labels update with the room number, and assigned beds cannot be removed by reducing sharing. Inventory changes persist across sessions and browsers using the same deployment.
+
+The first-admin, staff-access, and inventory foundation is backed by D1, but dashboard metrics and guest, booking, balance, reporting, and email examples remain non-authoritative previews. Booking availability does not yet account for date conflicts, rent is not calculated, and completing the booking preview does not create a reservation. Account recovery, backups, and production hardening remain incomplete. Do not use this app for real guest data or present it as ready for operational use.
+
 ## Visual direction
 
 Use a clean, modern hospitality aesthetic with a calm blue and teal palette, neutral surfaces, readable typography, and generous spacing. Use consistent status badges, accessible contrast, and touch-friendly controls.

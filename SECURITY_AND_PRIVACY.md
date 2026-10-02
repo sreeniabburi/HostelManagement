@@ -4,6 +4,10 @@
 
 This document records security and privacy requirements for the Hostel Management System. It is a product and implementation baseline, not legal advice or a claim of regulatory compliance. Applicable legal requirements and operational policies must be confirmed before launch.
 
+## Implemented foundation status
+
+The current implementation includes a one-time first-administrator bootstrap, server-verified sign-in, PBKDF2-SHA-256 password hashes, database-backed sessions delivered in HttpOnly/SameSite=Strict cookies, and a basic per-email/IP-hash sign-in throttle. Admins can create staff accounts with a chosen password, assign hostels, deactivate accounts, and reset staff passwords. A signed-in user can change their own password. Password changes revoke existing sessions. Staff reads and guest, booking, payment, availability, and report operations are limited to assigned hostels; inventory changes remain admin-only. Guest profiles, booking history, external payment receipts, and reports are persisted in D1. Forgotten administrator-password recovery, scheduled backups, a restore drill, audit history, email notifications, and production security validation are not implemented. Do not use this implementation for real guest records until deployment, backup, owner recovery, access, and privacy controls have been reviewed for production.
+
 ## Data handled
 
 The application is expected to store:
