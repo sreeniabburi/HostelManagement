@@ -18,15 +18,8 @@
 		{
 			"binding": "DB",
 			"database_name": "hostel-management",
-			// Replace this local placeholder with the ID from `wrangler d1 create`.
-			"database_id": "00000000-0000-0000-0000-000000000001",
-			"migrations_dir": "migrations"
-		},
-		{
-			"binding": "hostel_management",
-			"database_name": "hostel-management",
 			"database_id": "b057dd6a-2130-485b-bb14-5025f7f1463e",
-			"remote": true
+			"migrations_dir": "migrations"
 		}
 	]
 	/**

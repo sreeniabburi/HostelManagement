@@ -1,0 +1,2 @@
+hostel_key,guest_key,name,email,mobile,address,emergency_contact,identity_proof
+HST-001,GUEST-001,Sample Guest,guest@example.com,+919876543210,"45 Example Street, Bengaluru",+919876543211,Aadhaar card

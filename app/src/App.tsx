@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import './App.css'
+import { parseCsvRecords } from './csvImport'
 
 type IconName =
   | 'dashboard'
@@ -20,6 +21,7 @@ type IconName =
   | 'menu'
   | 'close'
   | 'users'
+  | 'import'
 
 const iconPaths: Record<IconName, string> = {
   dashboard: 'M3 3h8v8H3zM13 3h8v5h-8zM13 10h8v11h-8zM3 13h8v8H3z',
@@ -40,6 +42,7 @@ const iconPaths: Record<IconName, string> = {
   menu: 'M4 6h16M4 12h16M4 18h16',
   close: 'M18 6 6 18M6 6l12 12',
   users: 'M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m16 0v-2a4 4 0 0 0-3-3.87M10 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm4-3.87a4 4 0 0 1 0 7.75',
+  import: 'M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3',
 }
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -68,6 +71,7 @@ const navigation: { label: string; icon: IconName }[] = [
   { label: 'Payments', icon: 'payments' },
   { label: 'Reports', icon: 'reports' },
   { label: 'Staff accounts', icon: 'users' },
+  { label: 'Data import', icon: 'import' },
   { label: 'Account security', icon: 'settings' },
 ]
 
@@ -347,8 +351,13 @@ function HostelApplication({ user, onSignOut }: { user: AuthUser; onSignOut: () 
     return (
       <div className="app-shell setup-shell">
         <main className="main-content"><div className="page-wrap">
-          <div className="sidebar-profile"><div className="profile-info"><strong>{user.name}</strong><span>{user.role === 'admin' ? 'Administrator' : 'Staff'}</span></div><button className="button button-secondary" onClick={() => { void signOut() }}>Sign out</button></div>
-          <HostelSettings hostels={hostels} selectedHostelId="" canEdit={user.role === 'admin'} onSelectHostel={selectHostel} onAddHostel={createHostel} onRooms={() => setActivePage('Rooms & beds')} />
+          <div className="setup-header">
+            <div className="sidebar-profile"><div className="profile-info"><strong>{user.name}</strong><span>{user.role === 'admin' ? 'Administrator' : 'Staff'}</span></div><button className="button button-secondary" onClick={() => { void signOut() }}>Sign out</button></div>
+            {user.role === 'admin' && <div className="setup-import-actions"><button className="button button-secondary" onClick={() => setActivePage(activePage === 'Data import' ? 'Settings' : 'Data import')}>{activePage === 'Data import' ? 'Set up manually' : 'Import existing data'}</button></div>}
+          </div>
+          {activePage === 'Data import' && user.role === 'admin'
+            ? <DataImportScreen onImported={() => { void loadWorkspace() }} />
+            : <HostelSettings hostels={hostels} selectedHostelId="" canEdit={user.role === 'admin'} onSelectHostel={selectHostel} onAddHostel={createHostel} onRooms={() => setActivePage('Rooms & beds')} />}
         </div></main>
       </div>
     )
@@ -374,7 +383,7 @@ function HostelApplication({ user, onSignOut }: { user: AuthUser; onSignOut: () 
 
         <div className="workspace-label nav-label">MANAGE</div>
         <nav className="main-nav" aria-label="Main navigation">
-          {navigation.filter((item) => item.label !== 'Staff accounts' || user.role === 'admin').map((item) => (
+          {navigation.filter((item) => !['Staff accounts', 'Data import'].includes(item.label) || user.role === 'admin').map((item) => (
             <button
               className={`nav-link ${activePage === item.label ? 'nav-link-active' : ''}`}
               key={item.label}
@@ -459,6 +468,8 @@ function HostelApplication({ user, onSignOut }: { user: AuthUser; onSignOut: () 
             <ReportsScreen key={selectedHostel.id} hostel={selectedHostel} />
           ) : activePage === 'Staff accounts' && user.role === 'admin' ? (
             <StaffAccountsScreen hostels={hostels} />
+          ) : activePage === 'Data import' && user.role === 'admin' ? (
+            <DataImportScreen onImported={() => { void loadWorkspace() }} />
           ) : activePage === 'Account security' ? (
             <PasswordSettingsScreen />
           ) : (
@@ -1648,6 +1659,8 @@ function PaymentsScreen({ hostel }: { hostel: HostelEntry }) {
   const [payments, setPayments] = useState<PaymentRecord[]>([])
   const [amount, setAmount] = useState('')
   const [bookingId, setBookingId] = useState('')
+  const [balanceSearch, setBalanceSearch] = useState('')
+  const [balanceFilter, setBalanceFilter] = useState('All balances')
   const [method, setMethod] = useState('Cash')
   const [receivedOn, setReceivedOn] = useState(() => dateValue(new Date()))
   const [note, setNote] = useState('')
@@ -1681,6 +1694,21 @@ function PaymentsScreen({ hostel }: { hostel: HostelEntry }) {
   }, [hostel.id])
 
   const openBookings = bookings.filter((booking) => booking.outstandingCents > 0 && booking.status !== 'Cancelled')
+  const financialBookings = bookings.filter((booking) => booking.status !== 'Cancelled')
+  const filteredBalanceBookings = financialBookings.filter((booking) => {
+    const paymentStatus = booking.outstandingCents === 0 ? 'Paid' : booking.paidCents > 0 ? 'Partially paid' : 'Unpaid'
+    const matchesStatus = balanceFilter === 'All balances' || paymentStatus === balanceFilter
+    const searchText = `${booking.guest.name} ${booking.reference} ${booking.guest.mobile}`.toLowerCase()
+    return matchesStatus && searchText.includes(balanceSearch.trim().toLowerCase())
+  })
+  const paymentTotals = financialBookings.reduce((totals, booking) => ({
+    rentCents: totals.rentCents + booking.totalRentCents,
+    paidCents: totals.paidCents + booking.paidCents,
+    outstandingCents: totals.outstandingCents + booking.outstandingCents,
+    paidCount: totals.paidCount + Number(booking.outstandingCents === 0),
+    partialCount: totals.partialCount + Number(booking.paidCents > 0 && booking.outstandingCents > 0),
+    unpaidCount: totals.unpaidCount + Number(booking.paidCents === 0 && booking.outstandingCents > 0),
+  }), { rentCents: 0, paidCents: 0, outstandingCents: 0, paidCount: 0, partialCount: 0, unpaidCount: 0 })
   const selectedBooking = openBookings.find((booking) => booking.id === bookingId)
   const money = (cents: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(cents / 100)
   const savePayment = async (event: FormEvent<HTMLFormElement>) => {
@@ -1722,14 +1750,70 @@ function PaymentsScreen({ hostel }: { hostel: HostelEntry }) {
           <div className="staff-form-actions"><button className="button button-primary" type="submit" disabled={saving || !selectedBooking || !amount || Number(amount) <= 0 || Number(amount) * 100 > (selectedBooking?.outstandingCents ?? 0)}>{saving ? 'Recording…' : 'Record payment'}</button></div>
         </form>
       </div>
+      <div className="rooms-summary-grid payment-summary-grid">
+        <div className="rooms-summary-card"><span className="room-summary-symbol summary-all"><Icon name="payments" size={18} /></span><span><small>Total rent</small><strong>{money(paymentTotals.rentCents)}</strong></span></div>
+        <div className="rooms-summary-card"><span className="room-summary-symbol summary-occupied"><span /></span><span><small>Received</small><strong>{money(paymentTotals.paidCents)}</strong></span></div>
+        <div className="rooms-summary-card"><span className="room-summary-symbol summary-vacant"><span /></span><span><small>Outstanding</small><strong>{money(paymentTotals.outstandingCents)}</strong></span></div>
+        <div className="rooms-summary-card payment-count-summary"><span className="room-summary-symbol summary-reserved"><span /></span><span><small>Paid · partial · unpaid stays</small><strong>{paymentTotals.paidCount} · {paymentTotals.partialCount} · {paymentTotals.unpaidCount}</strong></span></div>
+      </div>
       <div className="panel booking-list-panel">
-        <div className="booking-list-heading"><div><h2>Payment history</h2><p>Recorded receipts for {hostel.name}</p></div><span className="booking-total">{payments.length} records</span></div>
+        <div className="booking-list-heading"><div><h2>Guest payment status</h2><p>All non-cancelled stays, including checked-out history</p></div><span className="booking-total">{filteredBalanceBookings.length} stays</span></div>
+        <div className="booking-filters">
+          <label className="booking-search"><Icon name="search" size={17} /><input value={balanceSearch} onChange={(event) => setBalanceSearch(event.target.value)} placeholder="Search guest, phone, or booking ID" /></label>
+          <label className="visually-hidden" htmlFor="payment-status-filter">Filter by payment status</label>
+          <select id="payment-status-filter" className="booking-status-filter" value={balanceFilter} onChange={(event) => setBalanceFilter(event.target.value)}>
+            <option>All balances</option><option>Paid</option><option>Partially paid</option><option>Unpaid</option>
+          </select>
+        </div>
+        <div className="booking-table-wrap"><table className="booking-table payment-balance-table">
+          <thead><tr><th>GUEST / BOOKING</th><th>STAY</th><th>RENT</th><th>RECEIVED</th><th>OUTSTANDING</th><th>PAYMENT STATUS</th></tr></thead>
+          <tbody>{filteredBalanceBookings.map((booking) => {
+            const status = booking.outstandingCents === 0 ? 'Paid' : booking.paidCents > 0 ? 'Partially paid' : 'Unpaid'
+            return <tr key={booking.id}>
+              <td><div className="booking-guest-cell"><span className="guest-avatar neutral">{booking.guest.name.slice(0, 2).toUpperCase()}</span><span><strong>{booking.guest.name}</strong><small>{booking.reference} · {booking.guest.mobile}</small></span></div></td>
+              <td><strong className="booking-dates">{booking.arrivalDate}</strong><small className="booking-cell-sub">to {booking.departureDate} · {booking.status}</small></td>
+              <td>{money(booking.totalRentCents)}</td>
+              <td className="balance-zero">{money(booking.paidCents)}</td>
+              <td className={booking.outstandingCents === 0 ? 'balance-zero' : 'balance-due'}>{money(booking.outstandingCents)}</td>
+              <td><span className={`payment-status-pill ${status.toLowerCase().replace(' ', '-')}`}>{status}</span></td>
+            </tr>
+          })}
+            {!filteredBalanceBookings.length && <tr><td colSpan={6}><div className="booking-empty">{loading ? 'Loading guest balances…' : financialBookings.length ? 'No stays match this search or payment status.' : `No booking balances recorded for ${hostel.name}.`}</div></td></tr>}
+          </tbody>
+        </table></div>
+        <div className="booking-mobile-list payment-balance-mobile-list">
+          {filteredBalanceBookings.map((booking) => {
+            const status = booking.outstandingCents === 0 ? 'Paid' : booking.paidCents > 0 ? 'Partially paid' : 'Unpaid'
+            return <article className="booking-mobile-card" key={booking.id}>
+              <div className="booking-mobile-top">
+                <div className="booking-guest-cell"><span className="guest-avatar neutral">{booking.guest.name.slice(0, 2).toUpperCase()}</span><span><strong>{booking.guest.name}</strong><small>{booking.reference}</small></span></div>
+                <span className={`payment-status-pill ${status.toLowerCase().replace(' ', '-')}`}>{status}</span>
+              </div>
+              <div className="booking-mobile-details"><span><Icon name="calendar" size={15} /> {booking.arrivalDate} – {booking.departureDate} · {booking.status}</span><span><Icon name="payments" size={15} /> Rent {money(booking.totalRentCents)} · received {money(booking.paidCents)}</span></div>
+              <div className="booking-mobile-balance"><span>Outstanding</span><strong className={booking.outstandingCents === 0 ? 'balance-zero' : 'balance-due'}>{money(booking.outstandingCents)}</strong></div>
+            </article>
+          })}
+          {!filteredBalanceBookings.length && <div className="booking-empty">{loading ? 'Loading guest balances…' : financialBookings.length ? 'No stays match this search or payment status.' : `No booking balances recorded for ${hostel.name}.`}</div>}
+        </div>
+      </div>
+      <div className="panel booking-list-panel">
+        <div className="booking-list-heading"><div><h2>Payment history</h2><p>Guests who paid and each receipt recorded for {hostel.name}</p></div><span className="booking-total">{payments.length} receipts</span></div>
         <div className="booking-table-wrap"><table className="booking-table">
-          <thead><tr><th>GUEST / BOOKING</th><th>DATE</th><th>METHOD</th><th>NOTE</th><th>AMOUNT</th></tr></thead>
+          <thead><tr><th>PAID BY / BOOKING</th><th>DATE</th><th>METHOD</th><th>NOTE</th><th>AMOUNT</th></tr></thead>
           <tbody>{payments.map((payment) => <tr key={payment.id}><td><strong>{payment.guestName}</strong><small className="booking-cell-sub">{payment.reference}</small></td><td>{payment.receivedOn}</td><td>{payment.method}</td><td>{payment.note || '—'}</td><td className="balance-zero">{money(payment.amountCents)}</td></tr>)}
             {!payments.length && <tr><td colSpan={5}><div className="booking-empty">{loading ? 'Loading payments…' : 'No payments have been recorded yet.'}</div></td></tr>}
           </tbody>
         </table></div>
+        <div className="booking-mobile-list payment-history-mobile-list">
+          {payments.map((payment) => <article className="booking-mobile-card" key={payment.id}>
+            <div className="booking-mobile-top">
+              <div className="booking-guest-cell"><span className="guest-avatar neutral">{payment.guestName.slice(0, 2).toUpperCase()}</span><span><strong>{payment.guestName}</strong><small>{payment.reference}</small></span></div>
+              <strong className="balance-zero">{money(payment.amountCents)}</strong>
+            </div>
+            <div className="booking-mobile-details"><span><Icon name="calendar" size={15} /> Received {payment.receivedOn}</span><span><Icon name="payments" size={15} /> {payment.method}{payment.note ? ` · ${payment.note}` : ''}</span></div>
+          </article>)}
+          {!payments.length && <div className="booking-empty">{loading ? 'Loading payments…' : 'No payments have been recorded yet.'}</div>}
+        </div>
       </div>
     </section>
   )
@@ -1804,6 +1888,166 @@ function ReportsScreen({ hostel }: { hostel: HostelEntry }) {
           </tbody></table></div>
         </div>
       </>}
+    </section>
+  )
+}
+
+const importFileSpecs = [
+  { key: 'hostels', name: 'Hostels', filename: 'hostels.csv', columns: ['hostel_key', 'name', 'address'], detail: 'One row per new hostel. Keep hostel_key stable across every file.' },
+  { key: 'floors', name: 'Floors', filename: 'floors.csv', columns: ['hostel_key', 'floor_key', 'name', 'position'], detail: 'Floor position starts at 1. Each hostel needs at least one floor.' },
+  { key: 'rooms', name: 'Rooms', filename: 'rooms.csv', columns: ['hostel_key', 'floor_key', 'room_number', 'sharing'], detail: 'Sharing is 1–4 and must match the number of bed rows.' },
+  { key: 'beds', name: 'Beds', filename: 'beds.csv', columns: ['hostel_key', 'floor_key', 'room_number', 'bed_label', 'status'], detail: 'Status must be Vacant or Maintenance. Booking occupancy is derived from bookings.' },
+  { key: 'guests', name: 'Guests', filename: 'guests.csv', columns: ['hostel_key', 'guest_key', 'name', 'email', 'mobile', 'address', 'emergency_contact', 'identity_proof'], detail: 'Use one guest_key per guest within a hostel; bookings refer to it.' },
+  { key: 'bookings', name: 'Bookings', filename: 'bookings.csv', columns: ['hostel_key', 'booking_reference', 'guest_key', 'floor_key', 'room_number', 'bed_label', 'arrival_date', 'departure_date', 'status', 'total_rent'], detail: 'Dates use YYYY-MM-DD. Rent is a decimal amount (e.g. 12500.00), without a currency symbol.' },
+  { key: 'payments', name: 'Payment history', filename: 'payments.csv', columns: ['payment_key', 'hostel_key', 'booking_reference', 'amount', 'method', 'received_on', 'note'], detail: 'Use a unique payment_key to prevent duplicates. Methods: Cash, UPI, Bank transfer, or Other.' },
+] as const
+
+type ImportFileKey = typeof importFileSpecs[number]['key']
+type ImportPayload = Record<ImportFileKey, Record<string, string>[]>
+type ImportCounts = Partial<Record<ImportFileKey, number>>
+type ImportReply = { valid?: boolean; imported?: boolean; unchanged?: boolean; counts?: ImportCounts; issues?: string[]; error?: string }
+
+function DataImportScreen({ onImported }: { onImported: () => void }) {
+  const [files, setFiles] = useState<Partial<Record<ImportFileKey, File>>>({})
+  const [rows, setRows] = useState<ImportPayload | null>(null)
+  const [counts, setCounts] = useState<ImportCounts | null>(null)
+  const [issues, setIssues] = useState<string[]>([])
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [complete, setComplete] = useState(false)
+  const [unchanged, setUnchanged] = useState(false)
+
+  const readFiles = async () => {
+    const payload: ImportPayload = { hostels: [], floors: [], rooms: [], beds: [], guests: [], bookings: [], payments: [] }
+    for (const spec of importFileSpecs) {
+      const file = files[spec.key]
+      if (!file) continue
+      payload[spec.key] = await parseCsvRecords(await file.text(), spec.columns)
+    }
+    return payload
+  }
+
+  const validate = async () => {
+    setBusy(true)
+    setError('')
+    setIssues([])
+    setCounts(null)
+    setRows(null)
+    setComplete(false)
+    setUnchanged(false)
+    try {
+      const payload = await readFiles()
+      const response = await fetch('/api/import/validate', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const result = await response.json() as ImportReply
+      if (!response.ok) throw Object.assign(new Error(result.error ?? 'Unable to validate these CSV files.'), { issues: result.issues ?? [] })
+      setRows(payload)
+      setCounts(result.counts ?? {})
+    } catch (validationError) {
+      const detail = validationError as Error & { issues?: string[] }
+      setError(detail.message || 'Unable to validate these CSV files.')
+      setIssues(detail.issues ?? [])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const commit = async () => {
+    if (!rows) return
+    setBusy(true)
+    setError('')
+    setIssues([])
+    try {
+      const response = await fetch('/api/import/commit', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rows),
+      })
+      const result = await response.json() as ImportReply
+      if (!response.ok) throw Object.assign(new Error(result.error ?? 'Unable to import these records.'), { issues: result.issues ?? [] })
+      setCounts(result.counts ?? counts)
+      setUnchanged(result.unchanged ?? false)
+      setRows(null)
+      setFiles({})
+      setComplete(true)
+      onImported()
+    } catch (importError) {
+      const detail = importError as Error & { issues?: string[] }
+      setError(detail.message || 'Unable to import these records.')
+      setIssues(detail.issues ?? [])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="bookings-screen import-screen">
+      <div className="page-heading"><div><p className="eyebrow">INITIAL DATA LOAD</p><h1>Import hostel data</h1><p className="heading-subtitle">Download the templates, fill them, then validate every file before importing.</p></div></div>
+      <div className="settings-notice"><span>!</span><p>Import is admin-only and append-only. Conflicts reject the entire import; existing records are never replaced. Upload all linked files together. Do not upload identity documents, card numbers, or bank credentials.</p></div>
+      <div className="panel import-instructions">
+        <h2>Before you upload</h2>
+        <ul>
+          <li>Replace the sample row in each template; keep the exact column headers. Leave a file with only its header if you have no rows of that type.</li>
+          <li>Keep each hostel_key, floor_key, and guest_key consistent across all files. Existing hostel/inventory/guest/booking rows can be reused only when their values match exactly; conflicting values reject the import.</li>
+          <li>Import relationships together: hostels → floors → rooms → beds → guests → bookings → payments. Each room needs exactly its sharing count in bed rows.</li>
+          <li>Save files as UTF-8 CSV. Dates use YYYY-MM-DD; amounts use plain decimal numbers such as 12500.00. Keep mobile numbers formatted as text in spreadsheet software.</li>
+          <li>Bookings must refer to a guest_key and a bed in the same hostel. Payment totals cannot exceed the booking rent. Use a unique payment_key for each receipt, and keep your source files securely.</li>
+        </ul>
+      </div>
+      <div className="panel import-template-panel">
+        <div className="panel-heading"><div><h2>CSV templates</h2><p>Example rows are linked across the files. Replace sample data before upload.</p></div></div>
+        <div className="import-template-grid">
+          {importFileSpecs.map((spec) => (
+            <article className="import-template-card" key={spec.key}>
+              <div><strong>{spec.name}</strong><span>{spec.filename}</span></div>
+              <p>{spec.detail}</p>
+              <a className="button button-secondary" href={`/import-templates/${spec.filename}`} download>Download template</a>
+            </article>
+          ))}
+        </div>
+      </div>
+      <div className="panel import-upload-panel">
+        <div className="panel-heading"><div><h2>Select completed files</h2><p>You can upload only the categories you have data for.</p></div></div>
+        <div className="import-file-grid">
+          {importFileSpecs.map((spec) => (
+            <label className="form-field import-file-field" key={spec.key}>
+              <span>{spec.name}</span>
+              <input type="file" accept=".csv,text/csv" onChange={(event) => {
+                const file = event.target.files?.[0]
+                setFiles((current) => {
+                  const next = { ...current }
+                  if (file) next[spec.key] = file
+                  else delete next[spec.key]
+                  return next
+                })
+                setRows(null)
+                setCounts(null)
+                setIssues([])
+                setError('')
+                setComplete(false)
+                setUnchanged(false)
+              }} />
+              <small>{files[spec.key]?.name ?? 'No file selected'}</small>
+            </label>
+          ))}
+        </div>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {issues.length > 0 && <div className="import-issues" role="alert"><strong>Fix these issues, then validate again:</strong><ul>{issues.map((issue, index) => <li key={`${index}-${issue}`}>{issue}</li>)}</ul></div>}
+        {complete && <p className="settings-notice" role="status"><span>✓</span><span>{unchanged ? 'No new rows were added; matching existing records were reused.' : 'Import complete. The workspace has been refreshed.'}</span></p>}
+        {counts && <div className="import-validation-result" role="status">
+          <strong>{rows ? 'Validation passed — nothing has been imported yet.' : 'Rows processed'}</strong>
+          <p>{importFileSpecs.map((spec) => `${spec.name}: ${counts[spec.key] ?? 0}`).join(' · ')}</p>
+        </div>}
+        <div className="staff-form-actions">
+          <button className="button button-secondary" type="button" onClick={() => { void validate() }} disabled={busy}>{busy ? 'Validating…' : 'Validate files'}</button>
+          {rows && <button className="button button-primary" type="button" onClick={() => { void commit() }} disabled={busy}>{busy ? 'Importing…' : 'Import validated data'}</button>}
+        </div>
+      </div>
     </section>
   )
 }

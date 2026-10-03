@@ -2,7 +2,7 @@
 
 ## Status and conventions
 
-This document describes the conceptual model and current implementation. Migrations in `app/migrations/` define users, sessions, hostels, floors, rooms, beds, sign-in limits, guests, bookings, and payment records. Current booking totals are entered by staff rather than calculated from a rent rule; email notifications and audit events are not implemented. Stay dates are ISO date-only values interpreted as check-in inclusive and check-out exclusive. Production deployment still needs an explicit business timezone policy.
+This document describes the conceptual model and current implementation. Migrations in `app/migrations/` define users, sessions, hostels, floors, rooms, beds, sign-in limits, guests, bookings, and payment records. Administrators can append a validated set of linked CSV data, including booking and external payment history. Exact matches for existing hostels, floors, rooms, beds, guests, and bookings are reused without modification; conflicts are rejected and new payments have unique import keys to prevent receipt duplication. Current booking totals are entered by staff rather than calculated from a rent rule; email notifications and audit events are not implemented. Stay dates are ISO date-only values interpreted as check-in inclusive and check-out exclusive. Production deployment still needs an explicit business timezone policy.
 
 All records that contain hostel operations must be scoped to the applicable hostel. Monetary amounts should use a precise decimal or integer-minor-unit representation, not binary floating point. Currency should be explicit at the organization or hostel level if multiple currencies may be supported.
 

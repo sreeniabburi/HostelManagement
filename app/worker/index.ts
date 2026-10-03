@@ -22,7 +22,7 @@ class HttpError extends Error {
 
 const SESSION_COOKIE = 'hosteldesk_session'
 const SESSION_SECONDS = 60 * 60 * 24 * 14
-const PASSWORD_ITERATIONS = 210_000
+const PASSWORD_ITERATIONS = 100_000
 
 function json(data: unknown, status = 200, headers: HeadersInit = {}) {
   return Response.json(data, {
@@ -829,6 +829,645 @@ async function getReports(db: D1Database, hostelId: string) {
   })
 }
 
+type ImportCsvRow = Record<string, string>
+type ImportHostel = { key: string; id: string; name: string; address: string; isNew: boolean; line: number }
+type ImportFloor = { hostelKey: string; key: string; id: string; name: string; position: number; isNew: boolean; line: number }
+type ImportRoom = { hostelKey: string; floorKey: string; id: string; number: string; sharing: number; isNew: boolean; line: number }
+type ImportBed = { hostelKey: string; floorKey: string; roomNumber: string; id: string; label: string; status: 'Vacant' | 'Maintenance'; isNew: boolean; line: number }
+type ImportGuest = {
+  hostelKey: string; key: string; id: string; name: string; email: string; mobile: string
+  address: string; emergencyContact: string; identityProof: string; isNew: boolean; line: number
+}
+type ImportBooking = {
+  hostelKey: string; reference: string; guestKey: string; floorKey: string; roomNumber: string
+  bedLabel: string; id: string; arrival: string; departure: string; isNew: boolean
+  status: 'Reserved' | 'Checked in' | 'Checked out' | 'Cancelled'; totalRentCents: number; line: number
+}
+type ImportPayment = {
+  key: string; hostelKey: string; bookingReference: string; bookingId: string; id: string; amountCents: number
+  method: 'Cash' | 'UPI' | 'Bank transfer' | 'Other'; receivedOn: string; note: string; line: number
+}
+
+function importKey(...parts: string[]) {
+  return JSON.stringify(parts.map((part) => part.trim().toLocaleLowerCase()))
+}
+
+function importText(row: ImportCsvRow, column: string, label: string, maxLength: number) {
+  const value = row[column]?.trim()
+  if (!value || value.length > maxLength) throw new Error(`${label} is required (maximum ${maxLength} characters).`)
+  return value
+}
+
+function importOptionalText(row: ImportCsvRow, column: string, label: string, maxLength: number) {
+  const value = row[column]?.trim() ?? ''
+  if (value.length > maxLength) throw new Error(`${label} must be at most ${maxLength} characters.`)
+  return value
+}
+
+function importMoney(value: string, label: string, allowZero: boolean) {
+  if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(value)) {
+    throw new Error(`${label} must be a non-negative amount with at most two decimal places, without a currency symbol.`)
+  }
+  const [whole, fraction = ''] = value.split('.')
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+  if (!Number.isSafeInteger(cents) || cents > 100_000_000_000 || (!allowZero && cents === 0)) {
+    throw new Error(`${label} is outside the allowed amount range.`)
+  }
+  return cents
+}
+
+function importPosition(value: string, label: string, minimum: number, maximum: number) {
+  if (!/^\d+$/.test(value)) throw new Error(`${label} must be a whole number.`)
+  const number = Number(value)
+  if (number < minimum || number > maximum) throw new Error(`${label} must be between ${minimum} and ${maximum}.`)
+  return number
+}
+
+function validateImportRows<T>(
+  value: unknown,
+  file: string,
+  errors: string[],
+  parse: (row: ImportCsvRow, line: number) => T,
+) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    errors.push(`${file}: expected a list of CSV rows.`)
+    return []
+  }
+  const rows: T[] = []
+  value.forEach((raw, index) => {
+    const line = index + 2
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+      || Object.values(raw).some((cell) => typeof cell !== 'string')) {
+      errors.push(`${file}, row ${line}: invalid row data.`)
+      return
+    }
+    try {
+      rows.push(parse(raw as ImportCsvRow, line))
+    } catch (error) {
+      errors.push(`${file}, row ${line}: ${error instanceof Error ? error.message : 'invalid data.'}`)
+    }
+  })
+  return rows
+}
+
+async function validateImportPayload(value: Record<string, unknown>, user: User, db: D1Database) {
+  const errors: string[] = []
+  const hostels = validateImportRows(value.hostels, 'hostels.csv', errors, (row, line): ImportHostel => ({
+    key: importText(row, 'hostel_key', 'Hostel key', 64),
+    id: crypto.randomUUID(),
+    name: importText(row, 'name', 'Hostel name', 80),
+    address: importOptionalText(row, 'address', 'Address', 200),
+    isNew: true,
+    line,
+  }))
+  const floors = validateImportRows(value.floors, 'floors.csv', errors, (row, line): ImportFloor => ({
+    hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+    key: importText(row, 'floor_key', 'Floor key', 64),
+    id: crypto.randomUUID(),
+    name: importText(row, 'name', 'Floor name', 80),
+    position: importPosition(importText(row, 'position', 'Floor position', 4), 'Floor position', 1, 20),
+    isNew: true,
+    line,
+  }))
+  const rooms = validateImportRows(value.rooms, 'rooms.csv', errors, (row, line): ImportRoom => ({
+    hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+    floorKey: importText(row, 'floor_key', 'Floor key', 64),
+    id: crypto.randomUUID(),
+    number: importText(row, 'room_number', 'Room number', 32),
+    sharing: validSharing(importPosition(importText(row, 'sharing', 'Sharing', 1), 'Sharing', 1, 4)),
+    isNew: true,
+    line,
+  }))
+  const beds = validateImportRows(value.beds, 'beds.csv', errors, (row, line): ImportBed => {
+    const status = importText(row, 'status', 'Bed status', 20)
+    if (status !== 'Vacant' && status !== 'Maintenance') throw new Error('Bed status must be Vacant or Maintenance; occupancy is derived from bookings.')
+    return {
+      hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+      floorKey: importText(row, 'floor_key', 'Floor key', 64),
+      roomNumber: importText(row, 'room_number', 'Room number', 32),
+      id: crypto.randomUUID(),
+      label: importText(row, 'bed_label', 'Bed label', 32),
+      status,
+      isNew: true,
+      line,
+    }
+  })
+  const guests = validateImportRows(value.guests, 'guests.csv', errors, (row, line): ImportGuest => {
+    const proof = importText(row, 'identity_proof', 'Identity proof', 40)
+    if (!['Aadhaar card', 'Driving licence', 'Voter ID', 'PAN card'].includes(proof)) {
+      throw new Error('Identity proof must be Aadhaar card, Driving licence, Voter ID, or PAN card.')
+    }
+    return {
+      hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+      key: importText(row, 'guest_key', 'Guest key', 64),
+      id: crypto.randomUUID(),
+      name: importText(row, 'name', 'Guest name', 100),
+      email: normalizeEmail(importText(row, 'email', 'Email', 254)),
+      mobile: importText(row, 'mobile', 'Mobile number', 32),
+      address: importText(row, 'address', 'Address', 300),
+      emergencyContact: importText(row, 'emergency_contact', 'Emergency contact', 32),
+      identityProof: proof,
+      isNew: true,
+      line,
+    }
+  })
+  const bookings = validateImportRows(value.bookings, 'bookings.csv', errors, (row, line): ImportBooking => {
+    const status = importText(row, 'status', 'Booking status', 20)
+    if (!['Reserved', 'Checked in', 'Checked out', 'Cancelled'].includes(status)) {
+      throw new Error('Booking status must be Reserved, Checked in, Checked out, or Cancelled.')
+    }
+    const arrival = validDate(importText(row, 'arrival_date', 'Arrival date', 10), 'Arrival date')
+    const departure = validDate(importText(row, 'departure_date', 'Departure date', 10), 'Departure date')
+    if (departure <= arrival) throw new Error('Departure date must be after arrival date.')
+    return {
+      hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+      reference: importText(row, 'booking_reference', 'Booking reference', 64),
+      guestKey: importText(row, 'guest_key', 'Guest key', 64),
+      floorKey: importText(row, 'floor_key', 'Floor key', 64),
+      roomNumber: importText(row, 'room_number', 'Room number', 32),
+      bedLabel: importText(row, 'bed_label', 'Bed label', 32),
+      id: crypto.randomUUID(),
+      arrival,
+      departure,
+      isNew: true,
+      status: status as ImportBooking['status'],
+      totalRentCents: importMoney(importText(row, 'total_rent', 'Total rent', 16), 'Total rent', true),
+      line,
+    }
+  })
+  const payments = validateImportRows(value.payments, 'payments.csv', errors, (row, line): ImportPayment => {
+    const method = importText(row, 'method', 'Payment method', 32)
+    if (!['Cash', 'UPI', 'Bank transfer', 'Other'].includes(method)) {
+      throw new Error('Payment method must be Cash, UPI, Bank transfer, or Other.')
+    }
+    const receivedOn = validDate(importText(row, 'received_on', 'Received date', 10), 'Received date')
+    if (receivedOn > new Date().toISOString().slice(0, 10)) throw new Error('Received date cannot be in the future.')
+    return {
+      key: importText(row, 'payment_key', 'Payment key', 64),
+      hostelKey: importText(row, 'hostel_key', 'Hostel key', 64),
+      bookingReference: importText(row, 'booking_reference', 'Booking reference', 64),
+      bookingId: '',
+      id: crypto.randomUUID(),
+      amountCents: importMoney(importText(row, 'amount', 'Payment amount', 16), 'Payment amount', false),
+      method: method as ImportPayment['method'],
+      receivedOn,
+      note: importOptionalText(row, 'note', 'Payment note', 200),
+      line,
+    }
+  })
+
+  const totalRows = hostels.length + floors.length + rooms.length + beds.length + guests.length + bookings.length + payments.length
+  if (totalRows === 0) errors.push('Choose at least one CSV file containing data rows.')
+  if (totalRows > 500) errors.push('An import may contain at most 500 data rows across all CSV files.')
+  if (errors.length) return { errors: errors.slice(0, 100), counts: {} }
+
+  const hostelByKey = new Map<string, ImportHostel>()
+  const floorByKey = new Map<string, ImportFloor>()
+  const roomByKey = new Map<string, ImportRoom>()
+  const bedByKey = new Map<string, ImportBed>()
+  const guestByKey = new Map<string, ImportGuest>()
+  const bookingByReference = new Map<string, ImportBooking>()
+  const markDuplicate = (file: string, line: number, label: string) => errors.push(`${file}, row ${line}: duplicate ${label}.`)
+
+  for (const hostel of hostels) {
+    const key = importKey(hostel.key)
+    if (hostelByKey.has(key)) markDuplicate('hostels.csv', hostel.line, 'hostel_key')
+    else hostelByKey.set(key, hostel)
+  }
+  for (const floor of floors) {
+    const key = importKey(floor.hostelKey, floor.key)
+    if (floorByKey.has(key)) markDuplicate('floors.csv', floor.line, 'hostel_key/floor_key')
+    else floorByKey.set(key, floor)
+  }
+  for (const room of rooms) {
+    const key = importKey(room.hostelKey, room.number)
+    if (roomByKey.has(key)) markDuplicate('rooms.csv', room.line, 'room number within its hostel')
+    else roomByKey.set(key, room)
+  }
+  for (const bed of beds) {
+    const key = importKey(bed.hostelKey, bed.roomNumber, bed.label)
+    if (bedByKey.has(key)) markDuplicate('beds.csv', bed.line, 'bed label within its room')
+    else bedByKey.set(key, bed)
+  }
+  for (const guest of guests) {
+    const key = importKey(guest.hostelKey, guest.key)
+    if (guestByKey.has(key)) markDuplicate('guests.csv', guest.line, 'guest_key')
+    else guestByKey.set(key, guest)
+  }
+  for (const booking of bookings) {
+    const key = importKey(booking.reference)
+    if (bookingByReference.has(key)) markDuplicate('bookings.csv', booking.line, 'booking_reference')
+    else bookingByReference.set(key, booking)
+  }
+  const paymentKeys = new Set<string>()
+  for (const payment of payments) {
+    const key = importKey(payment.key)
+    if (paymentKeys.has(key)) markDuplicate('payments.csv', payment.line, 'payment_key')
+    paymentKeys.add(key)
+  }
+  const hostelNameKeys = new Set<string>()
+  for (const hostel of hostels) {
+    const normalized = hostel.name.toLocaleLowerCase()
+    if (hostelNameKeys.has(normalized)) markDuplicate('hostels.csv', hostel.line, 'hostel name')
+    hostelNameKeys.add(normalized)
+  }
+  const floorNames = new Set<string>()
+  const floorPositions = new Set<string>()
+  for (const floor of floors) {
+    const nameKey = importKey(floor.hostelKey, floor.name)
+    const positionKey = importKey(floor.hostelKey, String(floor.position))
+    if (floorNames.has(nameKey)) markDuplicate('floors.csv', floor.line, 'floor name within its hostel')
+    if (floorPositions.has(positionKey)) markDuplicate('floors.csv', floor.line, 'floor position within its hostel')
+    floorNames.add(nameKey)
+    floorPositions.add(positionKey)
+  }
+  const guestEmails = new Set<string>()
+  for (const guest of guests) {
+    const key = importKey(guest.hostelKey, guest.email)
+    if (guestEmails.has(key)) markDuplicate('guests.csv', guest.line, 'email within its hostel')
+    guestEmails.add(key)
+  }
+
+  for (const floor of floors) {
+    if (!hostelByKey.has(importKey(floor.hostelKey))) errors.push(`floors.csv, row ${floor.line}: hostel_key does not exist in hostels.csv.`)
+  }
+  for (const room of rooms) {
+    if (!floorByKey.has(importKey(room.hostelKey, room.floorKey))) {
+      errors.push(`rooms.csv, row ${room.line}: hostel_key/floor_key does not exist in floors.csv.`)
+    }
+  }
+  const bedsByRoom = new Map<string, ImportBed[]>()
+  for (const bed of beds) {
+    const roomKey = importKey(bed.hostelKey, bed.floorKey, bed.roomNumber)
+    if (!roomByKey.has(importKey(bed.hostelKey, bed.roomNumber))) {
+      errors.push(`beds.csv, row ${bed.line}: hostel_key/room_number does not exist in rooms.csv.`)
+    } else if (!floorByKey.has(importKey(bed.hostelKey, bed.floorKey))) {
+      errors.push(`beds.csv, row ${bed.line}: hostel_key/floor_key does not exist in floors.csv.`)
+    } else {
+      const group = bedsByRoom.get(roomKey) ?? []
+      group.push(bed)
+      bedsByRoom.set(roomKey, group)
+    }
+  }
+  for (const room of rooms) {
+    const assignedFloor = floorByKey.get(importKey(room.hostelKey, room.floorKey))
+    if (!assignedFloor) errors.push(`rooms.csv, row ${room.line}: floor_key does not exist for this hostel.`)
+    const roomBeds = bedsByRoom.get(importKey(room.hostelKey, room.floorKey, room.number)) ?? []
+    if (roomBeds.length && roomBeds.length !== room.sharing) {
+      errors.push(`rooms.csv, row ${room.line}: sharing is ${room.sharing}, but beds.csv has ${roomBeds.length} bed rows for this room.`)
+    }
+  }
+  for (const guest of guests) {
+    if (!hostelByKey.has(importKey(guest.hostelKey))) errors.push(`guests.csv, row ${guest.line}: hostel_key does not exist in hostels.csv.`)
+  }
+  const activeIntervals = new Map<string, ImportBooking[]>()
+  const paymentsByBooking = new Map<string, ImportPayment[]>()
+  for (const booking of bookings) {
+    const hostelKey = importKey(booking.hostelKey)
+    const guest = guestByKey.get(importKey(booking.hostelKey, booking.guestKey))
+    const floor = floorByKey.get(importKey(booking.hostelKey, booking.floorKey))
+    const room = roomByKey.get(importKey(booking.hostelKey, booking.roomNumber))
+    const bed = bedByKey.get(importKey(booking.hostelKey, booking.roomNumber, booking.bedLabel))
+    if (!hostelByKey.has(hostelKey)) errors.push(`bookings.csv, row ${booking.line}: hostel_key does not exist in hostels.csv.`)
+    if (!guest) errors.push(`bookings.csv, row ${booking.line}: guest_key does not exist for this hostel in guests.csv.`)
+    if (!floor) errors.push(`bookings.csv, row ${booking.line}: floor_key does not exist for this hostel in floors.csv.`)
+    if (!room || !rooms.some((candidate) => candidate === room && importKey(candidate.floorKey) === importKey(booking.floorKey))) {
+      errors.push(`bookings.csv, row ${booking.line}: room_number does not exist on this floor in rooms.csv.`)
+    }
+    if (!bed || importKey(bed.floorKey) !== importKey(booking.floorKey)) {
+      errors.push(`bookings.csv, row ${booking.line}: bed_label does not exist in beds.csv for this room and floor.`)
+    } else if (bed.status !== 'Vacant') {
+      errors.push(`bookings.csv, row ${booking.line}: cannot assign a booking to a Maintenance bed.`)
+    }
+    if (booking.status !== 'Cancelled') {
+      const key = importKey(booking.hostelKey, booking.floorKey, booking.roomNumber, booking.bedLabel)
+      const intervals = activeIntervals.get(key) ?? []
+      if (intervals.some((prior) => booking.arrival < prior.departure && booking.departure > prior.arrival)) {
+        errors.push(`bookings.csv, row ${booking.line}: active dates overlap another booking on this bed.`)
+      }
+      intervals.push(booking)
+      activeIntervals.set(key, intervals)
+    }
+  }
+  for (const payment of payments) {
+    const booking = bookingByReference.get(importKey(payment.bookingReference))
+    if (!booking) {
+      errors.push(`payments.csv, row ${payment.line}: booking_reference does not exist in bookings.csv.`)
+      continue
+    }
+    if (importKey(booking.hostelKey) !== importKey(payment.hostelKey)) {
+      errors.push(`payments.csv, row ${payment.line}: hostel_key does not match the booking's hostel.`)
+    }
+    payment.bookingId = booking.id
+    const group = paymentsByBooking.get(importKey(booking.reference)) ?? []
+    group.push(payment)
+    paymentsByBooking.set(importKey(booking.reference), group)
+  }
+  const addConflict = (file: string, line: number, message: string) => errors.push(`${file}, row ${line}: ${message}`)
+  const hostelNames = hostels.map((hostel) => hostel.name)
+  const existingHostels = hostelNames.length
+    ? (await db.prepare(`SELECT id, name, address FROM hostels WHERE name COLLATE NOCASE IN (${hostelNames.map(() => '?').join(',')})`)
+      .bind(...hostelNames).all<{ id: string; name: string; address: string }>()).results
+    : []
+  for (const hostel of hostels) {
+    const existing = existingHostels.find((row) => importKey(row.name) === importKey(hostel.name))
+    if (existing) {
+      if (existing.address !== hostel.address) addConflict('hostels.csv', hostel.line, `hostel "${hostel.name}" exists with a different address.`)
+      hostel.id = existing.id
+      hostel.isNew = false
+    }
+  }
+  const hostelIdByKey = new Map(hostels.map((hostel) => [importKey(hostel.key), hostel.id]))
+  const hostelIdsForImport = [...new Set(hostels.map((hostel) => hostel.id))]
+  const idPlaceholders = hostelIdsForImport.map(() => '?').join(',')
+  const existingFloors = hostelIdsForImport.length
+    ? (await db.prepare(`SELECT id, hostel_id, name, position FROM floors WHERE hostel_id IN (${idPlaceholders})`)
+      .bind(...hostelIdsForImport).all<{ id: string; hostel_id: string; name: string; position: number }>()).results
+    : []
+  for (const floor of floors) {
+    const hostelId = hostelIdByKey.get(importKey(floor.hostelKey))
+    const matching = existingFloors.filter((row) => row.hostel_id === hostelId && (
+      importKey(row.name) === importKey(floor.name) || Number(row.position) === floor.position - 1
+    ))
+    if (matching.length) {
+      const exact = matching.find((row) => importKey(row.name) === importKey(floor.name) && Number(row.position) === floor.position - 1)
+      if (!exact) addConflict('floors.csv', floor.line, 'floor name/position conflicts with existing inventory.')
+      else {
+        floor.id = exact.id
+        floor.isNew = false
+      }
+    }
+  }
+  const existingRooms = hostelIdsForImport.length
+    ? (await db.prepare(`SELECT id, hostel_id, floor_id, number, sharing FROM rooms WHERE hostel_id IN (${idPlaceholders})`)
+      .bind(...hostelIdsForImport).all<{ id: string; hostel_id: string; floor_id: string; number: string; sharing: number }>()).results
+    : []
+  const roomIdsByReference = new Map<string, string>()
+  for (const room of rooms) {
+    const hostelId = hostelIdByKey.get(importKey(room.hostelKey))
+    const floorId = floorByKey.get(importKey(room.hostelKey, room.floorKey))?.id
+    const existing = existingRooms.find((row) => row.hostel_id === hostelId && importKey(row.number) === importKey(room.number))
+    if (existing) {
+      if (existing.floor_id !== floorId || Number(existing.sharing) !== room.sharing) {
+        addConflict('rooms.csv', room.line, `room "${room.number}" exists with different floor or sharing capacity.`)
+      } else {
+        room.id = existing.id
+        room.isNew = false
+      }
+    }
+    roomIdsByReference.set(importKey(room.hostelKey, room.floorKey, room.number), room.id)
+  }
+  const existingBeds = roomIdsByReference.size
+    ? (await db.prepare(
+      `SELECT b.id, b.room_id, b.label, b.status FROM beds b
+       WHERE b.room_id IN (${[...new Set(roomIdsByReference.values())].map(() => '?').join(',')})`,
+    ).bind(...[...new Set(roomIdsByReference.values())]).all<{ id: string; room_id: string; label: string; status: string }>()).results
+    : []
+  const existingBedsByRoom = new Map<string, typeof existingBeds>()
+  for (const existing of existingBeds) {
+    const group = existingBedsByRoom.get(existing.room_id) ?? []
+    group.push(existing)
+    existingBedsByRoom.set(existing.room_id, group)
+  }
+  for (const room of rooms) {
+    const bedRows = bedsByRoom.get(importKey(room.hostelKey, room.floorKey, room.number)) ?? []
+    const existingForRoom = existingBedsByRoom.get(room.id) ?? []
+    if (bedRows.length === 0 && existingForRoom.length === room.sharing) {
+      for (const existing of existingForRoom) {
+        const bed: ImportBed = {
+          hostelKey: room.hostelKey, floorKey: room.floorKey, roomNumber: room.number,
+          id: existing.id, label: existing.label, status: existing.status as ImportBed['status'], isNew: false, line: room.line,
+        }
+        bedByKey.set(importKey(bed.hostelKey, bed.roomNumber, bed.label), bed)
+      }
+    } else if (bedRows.length !== 0 && bedRows.length !== room.sharing) {
+      addConflict('rooms.csv', room.line, `include either all ${room.sharing} beds for this room or none of them.`)
+    } else if (room.isNew && bedRows.length !== room.sharing) {
+      addConflict('rooms.csv', room.line, `new room "${room.number}" needs exactly ${room.sharing} bed rows in beds.csv.`)
+    } else if (!room.isNew && existingForRoom.length !== room.sharing) {
+      addConflict('rooms.csv', room.line, `existing room "${room.number}" has a different number of beds than its sharing setting.`)
+    }
+  }
+  for (const bed of beds) {
+    const roomId = roomIdsByReference.get(importKey(bed.hostelKey, bed.floorKey, bed.roomNumber))
+    if (!roomId) continue
+    const existing = existingBeds.find((row) => row.room_id === roomId && importKey(row.label) === importKey(bed.label))
+    if (existing) {
+      if (existing.status !== bed.status) addConflict('beds.csv', bed.line, `bed "${bed.label}" exists with a different status.`)
+      else {
+        bed.id = existing.id
+        bed.isNew = false
+      }
+    } else if (!rooms.find((room) => room.id === roomId)?.isNew) {
+      addConflict('beds.csv', bed.line, `bed "${bed.label}" does not match an existing bed in this room.`)
+    }
+  }
+  const importedHostelIds = [...new Set(hostels.map((hostel) => hostel.id))]
+  const guestExisting = importedHostelIds.length
+    ? (await db.prepare(`SELECT id, hostel_id, name, email, mobile, address, emergency_contact, identity_proof FROM guests WHERE hostel_id IN (${importedHostelIds.map(() => '?').join(',')})`)
+      .bind(...importedHostelIds).all<{
+        id: string; hostel_id: string; name: string; email: string; mobile: string
+        address: string; emergency_contact: string; identity_proof: string
+      }>()).results
+    : []
+  for (const guest of guests) {
+    const hostelId = hostelIdByKey.get(importKey(guest.hostelKey))
+    const existing = guestExisting.find((row) => row.hostel_id === hostelId && importKey(row.email) === importKey(guest.email))
+    if (existing) {
+      const exact = existing.name === guest.name && existing.mobile === guest.mobile && existing.address === guest.address
+        && existing.emergency_contact === guest.emergencyContact && existing.identity_proof === guest.identityProof
+      if (!exact) addConflict('guests.csv', guest.line, `email "${guest.email}" already exists with different guest details.`)
+      guest.id = existing.id
+      guest.isNew = false
+    }
+  }
+  const bookingRefs = bookings.map((booking) => booking.reference)
+  const existingBookings = bookingRefs.length
+    ? (await db.prepare(
+      `SELECT id, reference, hostel_id, guest_id, bed_id, arrival_date, departure_date, status, total_rent_cents
+       FROM bookings WHERE reference COLLATE NOCASE IN (${bookingRefs.map(() => '?').join(',')})`,
+    ).bind(...bookingRefs).all<{
+      id: string; reference: string; hostel_id: string; guest_id: string; bed_id: string
+      arrival_date: string; departure_date: string; status: string; total_rent_cents: number
+    }>()).results
+    : []
+  const guestIdByKey = new Map(guests.map((guest) => [importKey(guest.hostelKey, guest.key), guest.id]))
+  for (const booking of bookings) {
+    const existing = existingBookings.find((row) => importKey(row.reference) === importKey(booking.reference))
+    if (!existing) continue
+    const hostelId = hostelIdByKey.get(importKey(booking.hostelKey))
+    const guestId = guestIdByKey.get(importKey(booking.hostelKey, booking.guestKey))
+    const bedId = bedByKey.get(importKey(booking.hostelKey, booking.roomNumber, booking.bedLabel))?.id
+    const exact = existing.hostel_id === hostelId && existing.guest_id === guestId && existing.bed_id === bedId
+      && existing.arrival_date === booking.arrival && existing.departure_date === booking.departure
+      && existing.status === booking.status && Number(existing.total_rent_cents) === booking.totalRentCents
+    if (!exact) addConflict('bookings.csv', booking.line, `booking_reference "${booking.reference}" exists with different stay or rent details.`)
+    booking.id = existing.id
+    booking.isNew = false
+  }
+  const candidateBedIds = [...new Set([...bedByKey.values()].map((bed) => bed.id))]
+  const existingActiveBookings = candidateBedIds.length
+    ? (await db.prepare(
+      `SELECT id, bed_id, arrival_date, departure_date FROM bookings
+       WHERE bed_id IN (${candidateBedIds.map(() => '?').join(',')}) AND status != 'Cancelled'`,
+    ).bind(...candidateBedIds).all<{ id: string; bed_id: string; arrival_date: string; departure_date: string }>()).results
+    : []
+  for (const booking of bookings) {
+    if (!booking.isNew || booking.status === 'Cancelled') continue
+    const bedId = bedByKey.get(importKey(booking.hostelKey, booking.roomNumber, booking.bedLabel))?.id
+    if (existingActiveBookings.some((existing) => existing.bed_id === bedId
+      && booking.arrival < existing.departure_date && booking.departure > existing.arrival_date)) {
+      addConflict('bookings.csv', booking.line, 'stay dates overlap an existing booking on this bed.')
+    }
+  }
+  for (const payment of payments) {
+    const booking = bookingByReference.get(importKey(payment.bookingReference))
+    if (booking) payment.bookingId = booking.id
+  }
+  if (payments.length) {
+    const keys = payments.map((payment) => payment.key)
+    const existing = await db.prepare(
+      `SELECT import_key FROM payments WHERE import_key COLLATE NOCASE IN (${keys.map(() => '?').join(',')})`,
+    ).bind(...keys).all<{ import_key: string }>()
+    const existingKeys = new Set(existing.results.map((row) => importKey(row.import_key)))
+    for (const payment of payments) {
+      if (existingKeys.has(importKey(payment.key))) addConflict('payments.csv', payment.line, `payment_key "${payment.key}" has already been imported.`)
+    }
+  }
+  if (bookings.length) {
+    const bookingIds = [...new Set(bookings.map((booking) => booking.id))]
+    const existingPayments = await db.prepare(
+      `SELECT booking_id, amount_cents, method, received_on, note FROM payments
+       WHERE booking_id IN (${bookingIds.map(() => '?').join(',')})`,
+    ).bind(...bookingIds).all<{ booking_id: string; amount_cents: number; method: string; received_on: string; note: string }>()
+    const paidByBooking = new Map<string, number>()
+    for (const row of existingPayments.results) {
+      paidByBooking.set(row.booking_id, (paidByBooking.get(row.booking_id) ?? 0) + Number(row.amount_cents))
+    }
+    for (const payment of payments) {
+      const duplicate = existingPayments.results.some((row) => row.booking_id === payment.bookingId
+        && Number(row.amount_cents) === payment.amountCents && row.method === payment.method
+        && row.received_on === payment.receivedOn && row.note === payment.note)
+      if (duplicate) addConflict('payments.csv', payment.line, 'an identical receipt is already recorded for this booking; check the source rows before importing.')
+    }
+    for (const booking of bookings) {
+      const bookingPayments = paymentsByBooking.get(importKey(booking.reference)) ?? []
+      const totalPaid = (paidByBooking.get(booking.id) ?? 0) + bookingPayments.reduce((total, payment) => total + payment.amountCents, 0)
+      if (totalPaid > booking.totalRentCents) {
+        addConflict('bookings.csv', booking.line, 'existing plus imported payments exceed total_rent.')
+      }
+      if (booking.status === 'Cancelled' && totalPaid > 0) {
+        addConflict('bookings.csv', booking.line, 'cancelled bookings cannot have recorded payments.')
+      }
+    }
+  }
+
+  const counts = {
+    hostels: hostels.length,
+    floors: floors.length,
+    rooms: rooms.length,
+    beds: beds.length,
+    guests: guests.length,
+    bookings: bookings.length,
+    payments: payments.length,
+  }
+  if (errors.length) return { errors: errors.slice(0, 100), counts }
+
+  const hostelIds = new Map(hostels.map((hostel) => [importKey(hostel.key), hostel.id]))
+  const floorIds = new Map(floors.map((floor) => [importKey(floor.hostelKey, floor.key), floor.id]))
+  const roomIds = new Map(rooms.map((room) => [importKey(room.hostelKey, room.floorKey, room.number), room.id]))
+  const bedIds = new Map([...bedByKey.values()].map((bed) => [
+    importKey(bed.hostelKey, bed.floorKey, bed.roomNumber, bed.label),
+    bed.id,
+  ]))
+  const guestIds = new Map(guests.map((guest) => [importKey(guest.hostelKey, guest.key), guest.id]))
+  const statements: D1PreparedStatement[] = []
+  for (const hostel of hostels) {
+    if (!hostel.isNew) continue
+    statements.push(db.prepare('INSERT INTO hostels (id, name, address) VALUES (?, ?, ?)').bind(hostel.id, hostel.name, hostel.address))
+  }
+  for (const floor of floors) {
+    if (!floor.isNew) continue
+    statements.push(db.prepare('INSERT INTO floors (id, hostel_id, name, position) VALUES (?, ?, ?, ?)')
+      .bind(floor.id, hostelIds.get(importKey(floor.hostelKey)), floor.name, floor.position - 1))
+  }
+  for (const room of rooms) {
+    if (!room.isNew) continue
+    statements.push(db.prepare('INSERT INTO rooms (id, hostel_id, floor_id, number, sharing) VALUES (?, ?, ?, ?, ?)')
+      .bind(room.id, hostelIds.get(importKey(room.hostelKey)), floorIds.get(importKey(room.hostelKey, room.floorKey)), room.number, room.sharing))
+  }
+  for (const bed of beds) {
+    if (!bed.isNew) continue
+    const roomId = roomIds.get(importKey(bed.hostelKey, bed.floorKey, bed.roomNumber))
+    statements.push(db.prepare('INSERT INTO beds (id, room_id, label, status) VALUES (?, ?, ?, ?)')
+      .bind(bed.id, roomId, bed.label, bed.status))
+  }
+  for (const guest of guests) {
+    if (!guest.isNew) continue
+    statements.push(db.prepare(
+      `INSERT INTO guests (id, hostel_id, name, email, mobile, address, emergency_contact, identity_proof)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(guest.id, hostelIds.get(importKey(guest.hostelKey)), guest.name, guest.email, guest.mobile, guest.address, guest.emergencyContact, guest.identityProof))
+  }
+  for (const booking of bookings) {
+    if (!booking.isNew) continue
+    const bedId = bedIds.get(importKey(booking.hostelKey, booking.floorKey, booking.roomNumber, booking.bedLabel))
+    statements.push(db.prepare(
+      `INSERT INTO bookings (id, reference, hostel_id, guest_id, bed_id, arrival_date, departure_date, status, total_rent_cents, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      booking.id, booking.reference, hostelIds.get(importKey(booking.hostelKey)),
+      guestIds.get(importKey(booking.hostelKey, booking.guestKey)), bedId,
+      booking.arrival, booking.departure, booking.status, booking.totalRentCents, user.id,
+    ))
+  }
+  for (const payment of payments) {
+    statements.push(db.prepare(
+      'INSERT INTO payments (id, hostel_id, booking_id, amount_cents, method, received_on, note, recorded_by, import_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(
+      payment.id, hostelIds.get(importKey(payment.hostelKey)), payment.bookingId,
+      payment.amountCents, payment.method, payment.receivedOn, payment.note, user.id, payment.key,
+    ))
+  }
+  return { errors: [], counts, statements }
+}
+
+async function importHostelData(request: Request, db: D1Database, user: User, commit: boolean) {
+  assertSameOrigin(request)
+  const contentLength = Number(request.headers.get('Content-Length') ?? 0)
+  if (contentLength > 2_000_000) throw new HttpError(413, 'Import request is too large. Keep the complete request under 2 MB.')
+  if (!request.headers.get('Content-Type')?.toLowerCase().includes('application/json')) {
+    throw new HttpError(415, 'Send parsed CSV rows as JSON.')
+  }
+  let body: Record<string, unknown>
+  try {
+    const text = await request.text()
+    if (text.length > 2_000_000) throw new HttpError(413, 'Import request is too large. Keep the complete request under 2 MB.')
+    const value: unknown = JSON.parse(text)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Import request must be a JSON object.')
+    body = value as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    throw new HttpError(400, 'Import request contains invalid JSON.')
+  }
+  const plan = await validateImportPayload(body, user, db)
+  if (plan.errors.length) {
+    return json({ error: 'No records were imported. Fix the listed issues and validate the files again.', issues: plan.errors, counts: plan.counts }, 422)
+  }
+  if (!commit) return json({ valid: true, counts: plan.counts })
+  if (!plan.statements?.length) return json({ imported: true, unchanged: true, counts: plan.counts })
+  try {
+    await db.batch(plan.statements)
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed|FOREIGN KEY constraint failed|CHECK constraint failed/.test(error.message)) {
+      throw new HttpError(409, 'No records were imported because data changed or conflicted after validation. Validate the files again.')
+    }
+    throw error
+  }
+  return json({ imported: true, counts: plan.counts }, 201)
+}
+
 async function api(request: Request, env: Env) {
   const url = new URL(request.url)
   if (url.pathname === '/api/health' && request.method === 'GET') {
@@ -851,6 +1490,14 @@ async function api(request: Request, env: Env) {
 
   const user = await requireUser(request, db)
   if (url.pathname === '/api/auth/password' && request.method === 'POST') return changePassword(request, db, user)
+  if (url.pathname === '/api/import/validate' && request.method === 'POST') {
+    requireAdmin(user)
+    return importHostelData(request, db, user, false)
+  }
+  if (url.pathname === '/api/import/commit' && request.method === 'POST') {
+    requireAdmin(user)
+    return importHostelData(request, db, user, true)
+  }
   if (url.pathname === '/api/hostels' && request.method === 'GET') return listHostels(user, db)
   if (url.pathname === '/api/hostels' && request.method === 'POST') {
     requireAdmin(user)

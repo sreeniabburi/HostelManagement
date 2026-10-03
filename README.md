@@ -23,6 +23,8 @@ Selected initial stack: React + TypeScript, Cloudflare Workers, and D1. The emai
 
 The app has first-administrator setup, server-side sign-in, secure cookie sessions, D1-backed hostel/floor/room/bed inventory, and admin-managed staff accounts with hostel assignments. Bookings and guest profiles are saved to D1; date-overlap checks reserve beds, and staff can check guests in, check them out, or cancel reservations. Staff can enter the agreed total rent for each booking and record partial or full cash, UPI, bank-transfer, or other payments received outside the app. Guest directory, booking history, outstanding balances, occupancy and receipt summaries, and CSV report export are database-backed. Signed-in users can change their passwords and admins can reset staff passwords; forgotten owner/admin-password recovery remains a production blocker. Manual D1 SQL export and restore commands are documented, but automated backups and restore drills are not configured. Email reminders are still deferred.
 
+An admin-only CSV importer and linked templates support an append-only load of hostels, floors, rooms, beds, guests, bookings, and payment history. Exact matches for existing workspace records can be reused without modification; conflicting rows are rejected. The importer validates relationships before atomically writing new rows. It is deployed to the live Worker; see [app/README.md](./app/README.md) for template fields and limits.
+
 ## Requirements highlights
 
 - Manage multiple hostels, with staff access assigned by administrators.
@@ -53,6 +55,6 @@ cd app
 npm run build
 ```
 
-For a Cloudflare account, authenticate with `npx wrangler login`, create a D1 database with `npx wrangler d1 create hostel-management`, replace the placeholder `database_id` in `app/wrangler.jsonc` with the ID returned by Wrangler, apply the schema using `npm run db:migrate:remote`, then deploy with `npm run deploy`. Deployment is blocked until a real database ID is configured. Keep the deployed URL private until the owner creates the first administrator.
+For a separate Cloudflare deployment, authenticate with `npx wrangler login`, create a dedicated D1 database with `npx wrangler d1 create hostel-management`, set its returned ID in `app/wrangler.jsonc`, apply the migrations with `npm run db:migrate:remote`, then deploy with `npm run deploy`. Keep each owner's database and credentials isolated.
 
-The local Wrangler D1 configuration stores development data under the ignored `app/.wrangler/` directory. Do not use it for real guest information. Production deployment is not yet complete. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the health check, manual backup/restore runbook, and unresolved owner-account recovery requirement.
+The live application is available at [hosteldesk-app-2026.workers.dev](https://hostel-management.hosteldesk-app-2026.workers.dev/). The local Wrangler D1 configuration stores development data under the ignored `app/.wrangler/` directory; do not use it for real guest information. See [DEPLOYMENT.md](./DEPLOYMENT.md) for health checks, the manual backup/restore runbook, and unresolved production safeguards.

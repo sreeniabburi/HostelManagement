@@ -2,7 +2,7 @@
 
 ## Status
 
-Selected initial target: React + TypeScript hosted with Cloudflare Workers/static assets, with Cloudflare D1 for data. The app has a database-backed health check and Wrangler D1 SQL export/restore commands. Production provisioning is not complete: the checked-in D1 ID remains a placeholder and the current Wrangler CLI is not authenticated to a Cloudflare account.
+Selected initial target: React + TypeScript hosted with Cloudflare Workers/static assets, with Cloudflare D1 for data. The current app, including its admin-only CSV importer, is deployed at [hosteldesk-app-2026.workers.dev](https://hostel-management.hosteldesk-app-2026.workers.dev/) and has a database-backed health check and Wrangler D1 SQL export/restore commands. The current Wrangler configuration points to that deployment's D1 database, and migration `0006_payment_import_keys.sql` is applied. Forgotten admin-password recovery, scheduled/retained backups, and alert routing remain unresolved, so the service is not yet production-ready.
 
 ## Cost and customer isolation targets
 
@@ -29,15 +29,15 @@ Plan separate environments for:
 
 Do not use production guest information in local or test environments. Keep environment-specific configuration and secrets outside the source repository.
 
-The current implementation stores user accounts, password hashes, sessions, hostel inventory, guest profiles, bookings, and payment receipts in D1. Passwords use PBKDF2-SHA-256 hashes; browser sessions use HttpOnly, SameSite=Strict cookies and database-backed expiry. Users can change their own password while signed in, and admins can reset staff passwords; either action revokes other sessions. Forgot-admin-password recovery, real remote deployment, scheduled/retained backups, and alert routing remain unresolved, so this is not yet production-ready.
+The current implementation stores user accounts, password hashes, sessions, hostel inventory, guest profiles, bookings, and payment receipts in D1. Passwords use PBKDF2-SHA-256 hashes; browser sessions use HttpOnly, SameSite=Strict cookies and database-backed expiry. Users can change their own password while signed in, and admins can reset staff passwords; either action revokes other sessions. Forgot-admin-password recovery, scheduled/retained backups, and alert routing remain unresolved, so this is not yet production-ready.
 
 ## Configuration and secrets
 
-The app config binds D1 as `DB`; its checked-in database ID is a local-development placeholder. Before any deployment:
+The app config binds D1 as `DB` and currently contains the D1 ID for the existing deployment. For a new, isolated customer deployment:
 
 1. Authenticate Wrangler with `npx wrangler login` and verify with `npx wrangler whoami`.
 2. Create a production D1 database with `npx wrangler d1 create hostel-management`.
-3. Replace `database_id` in `app/wrangler.jsonc` with that instance's returned ID. The deploy command now blocks if this remains the placeholder.
+3. Replace `database_id` in `app/wrangler.jsonc` with that instance's returned ID.
 4. Review the target account/name and take a pre-migration backup.
 5. Apply migrations with `npm run db:migrate:remote`, then deploy with `npm run deploy`.
 6. Check `https://<worker-host>/api/health` returns HTTP 200 and `{"status":"ok","database":"ok"}`.

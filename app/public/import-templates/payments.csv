@@ -1,0 +1,2 @@
+payment_key,hostel_key,booking_reference,amount,method,received_on,note
+PAY-001,HST-001,BK-IMPORT-001,1000.00,UPI,2026-10-03,Sample advance payment

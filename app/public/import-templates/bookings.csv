@@ -1,0 +1,2 @@
+hostel_key,booking_reference,guest_key,floor_key,room_number,bed_label,arrival_date,departure_date,status,total_rent
+HST-001,BK-IMPORT-001,GUEST-001,FL-1,101,101-a,2026-10-10,2026-10-15,Reserved,5000.00

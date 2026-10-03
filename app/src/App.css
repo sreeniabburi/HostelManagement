@@ -1872,6 +1872,149 @@ a:focus-visible {
   margin-bottom: 28px;
 }
 
+.setup-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.setup-import-actions {
+  margin-bottom: 28px;
+}
+
+.import-screen {
+  display: grid;
+  gap: 15px;
+}
+
+.import-screen .page-heading {
+  margin-bottom: 2px;
+}
+
+.import-instructions,
+.import-template-panel,
+.import-upload-panel {
+  padding: 19px;
+}
+
+.import-instructions h2,
+.import-template-panel h2,
+.import-upload-panel h2 {
+  color: #3b4c43;
+  font-size: 15px;
+  margin: 0;
+}
+
+.import-instructions ul,
+.import-issues ul {
+  color: #68776e;
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 11px 0 0;
+  padding-left: 19px;
+}
+
+.import-template-panel .panel-heading,
+.import-upload-panel .panel-heading {
+  margin-bottom: 14px;
+}
+
+.import-template-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.import-template-card {
+  border: 1px solid #e9eeeb;
+  border-radius: 9px;
+  display: grid;
+  gap: 8px;
+  padding: 13px;
+}
+
+.import-template-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  justify-content: space-between;
+}
+
+.import-template-card strong {
+  color: #3b4c43;
+  font-size: 12px;
+}
+
+.import-template-card > div span,
+.import-template-card p {
+  color: #85918b;
+  font-size: 10px;
+  margin: 0;
+}
+
+.import-template-card p {
+  line-height: 1.5;
+  min-height: 30px;
+}
+
+.import-template-card .button {
+  justify-self: start;
+  min-height: 32px;
+}
+
+.import-file-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.import-file-field {
+  background: #fbfcfb;
+  border: 1px solid #e9eeeb;
+  border-radius: 8px;
+  padding: 11px;
+}
+
+.import-file-field input {
+  color: #68776e;
+  font: inherit;
+  font-size: 10px;
+  max-width: 100%;
+}
+
+.import-file-field small {
+  color: #87948d;
+  overflow-wrap: anywhere;
+}
+
+.import-issues {
+  background: #fff3f1;
+  border: 1px solid #f1d5cf;
+  border-radius: 8px;
+  color: #a8473d;
+  font-size: 11px;
+  padding: 12px;
+}
+
+.import-issues ul {
+  color: #a8473d;
+  margin-top: 6px;
+}
+
+.import-validation-result {
+  background: #edf8f3;
+  border: 1px solid #d4eade;
+  border-radius: 8px;
+  color: #287054;
+  font-size: 11px;
+  padding: 12px;
+}
+
+.import-validation-result p {
+  line-height: 1.6;
+  margin: 5px 0 0;
+}
+
 .staff-screen {
   display: grid;
   gap: 16px;
@@ -2485,6 +2628,47 @@ a:focus-visible {
   color: #75847b;
 }
 
+.payment-summary-grid .rooms-summary-card {
+  min-width: 0;
+}
+
+.payment-summary-grid .rooms-summary-card strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.payment-count-summary strong {
+  white-space: nowrap;
+}
+
+.payment-balance-table {
+  min-width: 900px;
+}
+
+.payment-status-pill {
+  border-radius: 20px;
+  display: inline-flex;
+  font-size: 8px;
+  font-weight: 650;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.payment-status-pill.paid {
+  background: #e8f5ee;
+  color: #29815e;
+}
+
+.payment-status-pill.partially-paid {
+  background: #fcf2e5;
+  color: #a66d2d;
+}
+
+.payment-status-pill.unpaid {
+  background: #fff0ed;
+  color: #b24f3d;
+}
+
 .booking-open-button {
   align-items: center;
   background: transparent;
@@ -2871,6 +3055,31 @@ a:focus-visible {
 }
 
 @media (max-width: 620px) {
+  .setup-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .setup-import-actions {
+    align-self: flex-end;
+    margin-top: -18px;
+  }
+
+  .import-template-grid,
+  .import-file-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .import-template-panel,
+  .import-upload-panel,
+  .import-instructions {
+    padding: 14px;
+  }
+
+  .import-template-card p {
+    min-height: 0;
+  }
+
   .booking-summary-strip {
     padding: 12px 5px;
   }

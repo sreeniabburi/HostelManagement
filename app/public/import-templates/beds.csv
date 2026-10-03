@@ -1,0 +1,3 @@
+hostel_key,floor_key,room_number,bed_label,status
+HST-001,FL-1,101,101-a,Vacant
+HST-001,FL-1,101,101-b,Vacant
