@@ -497,7 +497,7 @@ function HostelApplication({ user, onSignOut }: { user: AuthUser; onSignOut: () 
             <span>{item.label}</span>
           </button>
         ))}
-        <button className="mobile-add-button" aria-label="Create booking" onClick={() => navigate('Bookings')}><Icon name="plus" size={21} /></button>
+        <button className="mobile-add-button" aria-label="Create booking" onClick={() => navigate('New booking')}><Icon name="plus" size={21} /></button>
       </nav>
     </div>
   )
@@ -1647,6 +1647,23 @@ function GuestsScreen({ hostel }: { hostel: HostelEntry }) {
             </tbody>
           </table>
         </div>
+        <div className="booking-mobile-list guest-mobile-list">
+          {filtered.map((guest) => (
+            <article className="booking-mobile-card guest-mobile-card" key={guest.id}>
+              <div className="booking-mobile-top">
+                <div className="booking-guest-cell"><span className="guest-avatar neutral">{guest.name.slice(0, 2).toUpperCase()}</span><span><strong>{guest.name}</strong><small>{guest.bookingCount} booking{guest.bookingCount === 1 ? '' : 's'}</small></span></div>
+              </div>
+              <div className="booking-mobile-details">
+                <span><Icon name="users" size={15} /> {guest.mobile} · {guest.email}</span>
+                <span><Icon name="rooms" size={15} /> {guest.address}</span>
+                <span><Icon name="settings" size={15} /> Identity proof: {guest.identityProof}</span>
+                {guest.emergencyContact && <span><Icon name="bell" size={15} /> Emergency contact: {guest.emergencyContact}</span>}
+                {guest.lastBookingAt && <span><Icon name="calendar" size={15} /> Stay history recorded</span>}
+              </div>
+            </article>
+          ))}
+          {!filtered.length && <div className="booking-empty">{loading ? 'Loading guests…' : guests.length ? 'No guests match your search.' : `No guest records yet for ${hostel.name}. Create a booking to add a guest.`}</div>}
+        </div>
       </div>
     </section>
   )
@@ -1886,6 +1903,13 @@ function ReportsScreen({ hostel }: { hostel: HostelEntry }) {
             {report.monthlyReceipts.map((receipt) => <tr key={receipt.month}><td>{receipt.month}</td><td className="balance-zero">{money(receipt.receivedCents)}</td></tr>)}
             {!report.monthlyReceipts.length && <tr><td colSpan={2}><div className="booking-empty">No payments recorded yet.</div></td></tr>}
           </tbody></table></div>
+          <div className="booking-mobile-list report-receipts-mobile-list">
+            {report.monthlyReceipts.map((receipt) => <article className="booking-mobile-card" key={receipt.month}>
+              <div className="booking-mobile-top"><strong>{receipt.month}</strong><strong className="balance-zero">{money(receipt.receivedCents)}</strong></div>
+              <div className="booking-mobile-details"><span><Icon name="payments" size={15} /> Total receipts recorded for this month</span></div>
+            </article>)}
+            {!report.monthlyReceipts.length && <div className="booking-empty">No payments recorded yet.</div>}
+          </div>
         </div>
       </>}
     </section>
